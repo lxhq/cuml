@@ -6,8 +6,6 @@ import ctypes
 import warnings
 from collections import deque
 
-from cuda.bindings.cyruntime cimport cudaStream_t
-
 import cupy as cp
 import cupyx.scipy.sparse
 import joblib
@@ -18,7 +16,6 @@ import scipy.spatial
 from cuml.common.array_descriptor import CumlArrayDescriptor
 from cuml.common.doc_utils import generate_docstring
 from cuml.common.sparse_utils import is_sparse
-from cuml.common.sparsefuncs import extract_knn_graph
 from cuml.internals import logger, reflect
 from cuml.internals.array import CumlArray
 from cuml.internals.array_sparse import SparseCumlArray
@@ -39,7 +36,9 @@ from cuml.internals.validation import (
     check_random_seed,
     check_y,
 )
+from cuml.manifold.utils import extract_knn_graph
 
+from cuda.bindings.cyruntime cimport cudaStream_t
 from libc.stdint cimport int64_t, uintptr_t
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
@@ -1084,10 +1083,10 @@ class UMAP(InteropMixin, CMajorInputTagMixin, SparseInputTagMixin, Base):
             input_hash = _joblib_hash(raw_data)
 
         if (knn_dists := getattr(self, "_knn_dists", None)) is not None:
-            knn_dists = to_cpu(knn_dists)
+            knn_dists = cp.asnumpy(knn_dists)
 
         if (knn_indices := getattr(self, "_knn_indices", None)) is not None:
-            knn_indices = to_cpu(knn_indices)
+            knn_indices = cp.asnumpy(knn_indices)
 
         attrs = {
             "embedding_": to_cpu(self.embedding_),
@@ -1302,19 +1301,15 @@ class UMAP(InteropMixin, CMajorInputTagMixin, SparseInputTagMixin, Base):
             knn_indices, knn_dists = extract_knn_graph(
                 (knn_graph if knn_graph is not None else self.precomputed_knn),
                 self._n_neighbors,
-                mem_type=False,     # mirrors the input graph mem type
+                mem_type=None,     # mirrors the input graph mem type
+                indices_dtype=("int32" if X_is_sparse else "int64"),
             )
-            knn_dists_cp = knn_dists.to_output("cupy")
-            if X_is_sparse:
-                knn_indices_cp = cp.asarray(
-                    knn_indices.to_output("cupy"), dtype=np.int32
-                )
-                # Drop the int64 original and keep only the int32 copy used by the kernel.
-                knn_indices = CumlArray(data=knn_indices_cp)
+            if isinstance(knn_indices, cp.ndarray):
+                knn_indices_ptr = <uintptr_t>knn_indices.data.ptr
+                knn_dists_ptr = <uintptr_t>knn_dists.data.ptr
             else:
-                knn_indices_cp = knn_indices.to_output("cupy")
-            knn_indices_ptr = <uintptr_t>knn_indices_cp.data.ptr
-            knn_dists_ptr = <uintptr_t>knn_dists_cp.data.ptr
+                knn_indices_ptr = <uintptr_t>knn_indices.ctypes.data
+                knn_dists_ptr = <uintptr_t>knn_dists.ctypes.data
         else:
             knn_indices = knn_dists = None
 

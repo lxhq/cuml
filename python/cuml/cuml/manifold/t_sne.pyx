@@ -8,7 +8,6 @@ import numpy as np
 from cuml.common.array_descriptor import CumlArrayDescriptor
 from cuml.common.doc_utils import generate_docstring
 from cuml.common.sparse_utils import is_sparse
-from cuml.common.sparsefuncs import extract_knn_graph
 from cuml.internals.array import CumlArray
 from cuml.internals.base import Base, get_handle
 from cuml.internals.interop import (
@@ -20,6 +19,7 @@ from cuml.internals.interop import (
 from cuml.internals.mixins import CMajorInputTagMixin, SparseInputTagMixin
 from cuml.internals.outputs import reflect
 from cuml.internals.validation import check_inputs, check_random_seed
+from cuml.manifold.utils import extract_knn_graph
 
 from libc.stdint cimport int64_t, uintptr_t
 from libcpp cimport bool
@@ -610,20 +610,13 @@ class TSNE(InteropMixin,
         if knn_graph is None:
             knn_graph = self.precomputed_knn
         if knn_graph is not None:
-            knn_indices, knn_dists = extract_knn_graph(knn_graph, params.n_neighbors)
-
-            knn_dists_cp = knn_dists.to_output("cupy")
-
-            if sparse_fit:
-                # Sparse fitting requires the indices to be int32
-                knn_indices_cp = cupy.asarray(
-                    knn_indices.to_output("cupy"), dtype=np.int32
-                )
-            else:
-                knn_indices_cp = knn_indices.to_output("cupy")
-
-            knn_dists_ptr = <uintptr_t>knn_dists_cp.data.ptr
-            knn_indices_ptr = <uintptr_t>knn_indices_cp.data.ptr
+            knn_indices, knn_dists = extract_knn_graph(
+                knn_graph,
+                params.n_neighbors,
+                indices_dtype="int32" if sparse_fit else "int64",
+            )
+            knn_dists_ptr = <uintptr_t>knn_dists.data.ptr
+            knn_indices_ptr = <uintptr_t>knn_indices.data.ptr
 
         # Allocate output array
         embedding = cupy.zeros(
