@@ -51,11 +51,12 @@ SMOKE_KDV_ROWS = 256
 SMOKE_KDV_COLS = 256
 SVM_BATCH_SIZE = 4096
 KDV_BATCH_SIZE = 8192
+PAIR_BUFFER_BYTES = 48 * 1024 * 1024 * 1024
 ABS_TOLERANCE = 1e-3
 REL_TOLERANCE = 1e-5
 SMOKE_TIMEOUT_SECONDS = 600
 SVM_TIMEOUT_SECONDS = 3600
-KDV_TIMEOUT_SECONDS = 21600
+KDV_TIMEOUT_SECONDS = 3600
 
 # Remote setup note:
 # This script expects the remote H100 machine to have a cuML environment at
@@ -325,6 +326,7 @@ def write_inventory(path: Path, timestamp: str, git_branch: str, git_commit: str
         f"kdv_scott_b: {KDV_SCOTT_B}",
         f"svm_batch_size: {SVM_BATCH_SIZE}",
         f"kdv_batch_size: {KDV_BATCH_SIZE}",
+        f"pair_buffer_bytes: {PAIR_BUFFER_BYTES}",
         f"git_branch: {git_branch}",
         f"git_commit: {git_commit}",
         "",
@@ -361,7 +363,10 @@ def timeout_for_workload(workload: Workload) -> int:
 
 
 def batch_size_for_workload(workload: Workload) -> int:
-    return SVM_BATCH_SIZE if workload.mode == "svm" else KDV_BATCH_SIZE
+    data_rows, _ = matrix_shape(workload.data_path)
+    cap = SVM_BATCH_SIZE if workload.mode == "svm" else KDV_BATCH_SIZE
+    memory_limited = max(1, PAIR_BUFFER_BYTES // (data_rows * 8))
+    return int(min(cap, memory_limited))
 
 
 def workload_command(workload: Workload, output_path: Path) -> list[str]:
