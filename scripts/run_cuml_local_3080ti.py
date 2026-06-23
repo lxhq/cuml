@@ -39,8 +39,6 @@ METHOD = "cuML-KDE"
 METHOD_TOKEN = "cuml-kde"
 ENGINE = "cuml"
 BACKEND = "GPU"
-PRECISION = "FP64"
-DTYPE = "float64"
 EXPECTED_TIMING_SCOPE = "score_samples_only"
 SVM_SCOTT_B = "1"
 KDV_SCOTT_B = "1"
@@ -80,6 +78,12 @@ SMOKE_KDV_REF = EXACT_REPO_ROOT / "results/SUSY_vis_10000_kdv_256x256_basic_scan
 
 
 @dataclass(frozen=True)
+class PrecisionConfig:
+    precision: str
+    dtype: str
+
+
+@dataclass(frozen=True)
 class Workload:
     run_group: str
     workload: str
@@ -96,6 +100,7 @@ class Workload:
 @dataclass
 class RunRecord:
     workload: Workload
+    precision_config: PrecisionConfig
     output_path: Path
     log_path: Path
     command: list[str]
@@ -107,6 +112,12 @@ class RunRecord:
     query_count_from_binary: str
     qps: str
     status: str
+
+
+PRECISION_CONFIGS = (
+    PrecisionConfig("FP64", "float64"),
+    PrecisionConfig("FP32", "float32"),
+)
 
 
 def run_env() -> dict[str, str]:
@@ -312,8 +323,8 @@ def write_inventory(path: Path, timestamp: str, git_branch: str, git_commit: str
         f"method: {METHOD}",
         f"engine: {ENGINE}",
         f"backend: {BACKEND}",
-        f"dtype: {DTYPE}",
-        f"precision: {PRECISION}",
+        "precision_configs: "
+        + ", ".join(f"{cfg.precision}/{cfg.dtype}" for cfg in PRECISION_CONFIGS),
         f"timing_scope: {EXPECTED_TIMING_SCOPE}",
         f"svm_scott_b: {SVM_SCOTT_B}",
         f"kdv_scott_b: {KDV_SCOTT_B}",
@@ -362,7 +373,11 @@ def batch_size_for_workload(workload: Workload) -> int:
     return int(min(cap, memory_limited))
 
 
-def workload_command(workload: Workload, output_path: Path) -> list[str]:
+def workload_command(
+    workload: Workload,
+    precision_config: PrecisionConfig,
+    output_path: Path,
+) -> list[str]:
     batch_size = str(batch_size_for_workload(workload))
     base = [str(PYTHON_BIN), str(HELPER), workload.mode]
     if workload.mode == "svm":
@@ -384,30 +399,46 @@ def workload_command(workload: Workload, output_path: Path) -> list[str]:
         "--batch-size",
         batch_size,
         "--dtype",
-        DTYPE,
+        precision_config.dtype,
     ])
     return base
 
 
-def output_name(workload: Workload) -> str:
+def output_name(workload: Workload, precision_config: PrecisionConfig) -> str:
     safe_b = workload.scale_value.replace(".", "p")
+    precision_token = precision_config.precision.lower()
     if workload.mode == "kdv":
         assert workload.grid_rows is not None and workload.grid_cols is not None
         return (
-            f"{workload.workload}_cuml-kde_fp64_"
+            f"{workload.workload}_cuml-kde_{precision_token}_"
             f"{workload.grid_rows}x{workload.grid_cols}_scott_diag_b{safe_b}.out"
         )
-    return f"{workload.workload}_cuml-kde_fp64_scott_diag_b{safe_b}.out"
+    return f"{workload.workload}_cuml-kde_{precision_token}_scott_diag_b{safe_b}.out"
 
 
-def run_workload(workload: Workload, run_dir: Path, commands_file: Path) -> RunRecord:
-    output_path = run_dir / "outputs" / workload.run_group / output_name(workload)
+def run_workload(
+    workload: Workload,
+    precision_config: PrecisionConfig,
+    run_dir: Path,
+    commands_file: Path,
+) -> RunRecord:
+    output_path = (
+        run_dir
+        / "outputs"
+        / precision_config.precision.lower()
+        / workload.run_group
+        / output_name(workload, precision_config)
+    )
     log_path = run_dir / "logs" / workload.run_group / f"{output_path.stem}.log"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    command = workload_command(workload, output_path)
+    command = workload_command(workload, precision_config, output_path)
     timeout_seconds = timeout_for_workload(workload)
 
-    print(f"[RUN] {workload.run_group} {workload.workload} (timeout={timeout_seconds}s)", flush=True)
+    print(
+        f"[RUN] {precision_config.precision} {workload.run_group} "
+        f"{workload.workload} (timeout={timeout_seconds}s)",
+        flush=True,
+    )
     return_code, wall_seconds, log_text, timed_out = run_command(
         command,
         log_path,
@@ -424,6 +455,7 @@ def run_workload(workload: Workload, run_dir: Path, commands_file: Path) -> RunR
 
     return RunRecord(
         workload=workload,
+        precision_config=precision_config,
         output_path=output_path,
         log_path=log_path,
         command=command,
@@ -459,8 +491,8 @@ def summary_row(
         "method_token": METHOD_TOKEN,
         "engine": ENGINE,
         "backend": BACKEND,
-        "precision": PRECISION,
-        "dtype": DTYPE,
+        "precision": record.precision_config.precision,
+        "dtype": record.precision_config.dtype,
         "workload": record.workload.workload,
         "dataset": record.workload.dataset,
         "mode": record.workload.mode,
@@ -509,6 +541,7 @@ def correctness_row(
     git_branch: str,
     git_commit: str,
     workload: Workload,
+    precision_config: PrecisionConfig,
     reference_method: str,
     reference_output: Path,
     output_path: Path,
@@ -534,7 +567,7 @@ def correctness_row(
         "scale": f"{workload.scale_mode} b={workload.scale_value}",
         "reference_method": reference_method,
         "method": METHOD,
-        "precision": PRECISION,
+        "precision": precision_config.precision,
         "reference_output": str(reference_output),
         "output_path": str(output_path),
         "value_count": metrics["value_count"],
@@ -631,8 +664,9 @@ def main() -> int:
     ]
 
     records: list[RunRecord] = []
-    for workload in [*smoke_workloads, *full_workloads]:
-        records.append(run_workload(workload, run_dir, commands_file))
+    for precision_config in PRECISION_CONFIGS:
+        for workload in [*smoke_workloads, *full_workloads]:
+            records.append(run_workload(workload, precision_config, run_dir, commands_file))
 
     summary_fields = [
         "timestamp",
@@ -684,36 +718,46 @@ def main() -> int:
         summary_fields,
     )
 
-    record_by_key = {(r.workload.run_group, r.workload.workload): r for r in records}
+    record_by_key = {
+        (r.precision_config.precision, r.workload.run_group, r.workload.workload): r
+        for r in records
+    }
     correctness_rows: list[dict[str, str]] = []
-    for workload in smoke_workloads:
-        record = record_by_key[(workload.run_group, workload.workload)]
-        reference = SMOKE_SVM_REF if workload.mode == "svm" else SMOKE_KDV_REF
-        correctness_rows.append(
-            correctness_row(
-                timestamp,
-                git_branch,
-                git_commit,
-                workload,
-                "checked_results",
-                reference,
-                record.output_path,
+    for precision_config in PRECISION_CONFIGS:
+        for workload in smoke_workloads:
+            record = record_by_key[
+                (precision_config.precision, workload.run_group, workload.workload)
+            ]
+            reference = SMOKE_SVM_REF if workload.mode == "svm" else SMOKE_KDV_REF
+            correctness_rows.append(
+                correctness_row(
+                    timestamp,
+                    git_branch,
+                    git_commit,
+                    workload,
+                    precision_config,
+                    "checked_results",
+                    reference,
+                    record.output_path,
+                )
             )
-        )
 
-    for workload in full_workloads:
-        record = record_by_key[(workload.run_group, workload.workload)]
-        correctness_rows.append(
-            correctness_row(
-                timestamp,
-                git_branch,
-                git_commit,
-                workload,
-                "Basic-Scan",
-                full_reference_for(workload),
-                record.output_path,
+        for workload in full_workloads:
+            record = record_by_key[
+                (precision_config.precision, workload.run_group, workload.workload)
+            ]
+            correctness_rows.append(
+                correctness_row(
+                    timestamp,
+                    git_branch,
+                    git_commit,
+                    workload,
+                    precision_config,
+                    "Basic-Scan",
+                    full_reference_for(workload),
+                    record.output_path,
+                )
             )
-        )
 
     correctness_fields = [
         "timestamp",
