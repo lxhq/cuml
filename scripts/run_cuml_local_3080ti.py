@@ -32,7 +32,7 @@ DATA_ROOT = Path("/home/ubuntu/Documents/workspace/dataset/GPU-accelerated_Kerne
 TMP_RESULT_ROOT = Path("/home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/tmp-results/stage0/cuml")
 PERSISTENT_RESULT_ROOT = Path("/home/ubuntu/Documents/workspace/dataset/GPU-accelerated_Kernel_Density_Computation/exact/experiments/stage0")
 EXACT_REPO_ROOT = Path("/home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/GPU-kernel-density-exact")
-BASIC_GROUND_TRUTH_ROOT = PERSISTENT_RESULT_ROOT / "local-3080ti/basic/basic-scan-ground-truth"
+BASIC_GROUND_TRUTH_ROOT = PERSISTENT_RESULT_ROOT / "ground_truth"
 
 MACHINE = "local-3080ti"
 METHOD = "cuML-KDE"
@@ -42,7 +42,7 @@ BACKEND = "GPU"
 PRECISION = "FP64"
 DTYPE = "float64"
 EXPECTED_TIMING_SCOPE = "score_samples_only"
-SVM_SCOTT_B = "0.1"
+SVM_SCOTT_B = "1"
 KDV_SCOTT_B = "1"
 SMOKE_SCOTT_B = "1"
 KDV_ROWS = 1920
@@ -604,9 +604,9 @@ def main() -> int:
         SMOKE_SUSY_VIS_X,
         SMOKE_SVM_REF,
         SMOKE_KDV_REF,
-        BASIC_GROUND_TRUTH_ROOT / "svm_susy_basic-scan_fp64_scott_diag_b0p1.out",
-        BASIC_GROUND_TRUTH_ROOT / "svm_home_basic-scan_fp64_scott_diag_b0p1.out",
-        BASIC_GROUND_TRUTH_ROOT / "svm_miniboone_basic-scan_fp64_scott_diag_b0p1.out",
+        BASIC_GROUND_TRUTH_ROOT / "svm_susy_basic-scan_fp64_scott_diag_b1.out",
+        BASIC_GROUND_TRUTH_ROOT / "svm_home_basic-scan_fp64_scott_diag_b1.out",
+        BASIC_GROUND_TRUTH_ROOT / "svm_miniboone_basic-scan_fp64_scott_diag_b1.out",
         BASIC_GROUND_TRUTH_ROOT / "kdv_home_visual_basic-scan_fp64_1920x2560_scott_diag_b1.out",
         BASIC_GROUND_TRUTH_ROOT / "kdv_susy_visual_basic-scan_fp64_1920x2560_scott_diag_b1.out",
     ]
