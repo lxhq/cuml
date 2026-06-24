@@ -24,7 +24,7 @@ from typing import Iterable
 CUML_ROOT = Path("/home/lxheq/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/baselines/cuml")
 HELPER = CUML_ROOT / "scripts/cuml_exact_kde.py"
 PYTHON_BIN = Path(
-    "/home/lxheq/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/venvs/cuml-kde/bin/python"
+    "/home/lxheq/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/venvs/kde-baselines/bin/python"
 )
 CUDA_HOME = Path("/usr/local/cuda-12.4")
 
@@ -57,10 +57,10 @@ SVM_TIMEOUT_SECONDS = 3600
 KDV_TIMEOUT_SECONDS = 3600
 
 # Remote setup note:
-# This script expects the remote H100 machine to have a cuML environment at
-# PYTHON_BIN. The environment is not created by this runner. Generated evidence
-# is written only to remote tmp-results and must be copied back to the local
-# persistent storage manually after review.
+# This script expects the remote H100 machine to have the shared KDE baseline
+# environment at PYTHON_BIN. The environment is not created by this runner.
+# Generated evidence is written only to remote tmp-results and must be copied
+# back to the local persistent storage manually after review.
 
 GPU_QUERY_COMMAND = [
     "nvidia-smi",

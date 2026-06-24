@@ -24,7 +24,7 @@ from typing import Iterable
 CUML_ROOT = Path("/home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/baselines/cuml")
 HELPER = CUML_ROOT / "scripts/cuml_exact_kde.py"
 PYTHON_BIN = Path(
-    "/home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/venvs/cuml-kde/bin/python"
+    "/home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/venvs/kde-baselines/bin/python"
 )
 CUDA_HOME = Path("/usr/local/cuda-12.6")
 
