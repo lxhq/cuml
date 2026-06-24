@@ -16,7 +16,7 @@ from stage0p1_output_utils import Attempt, run_attempts, run_env_with_cuda
 
 CUML_ROOT = Path("/home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/baselines/cuml")
 HELPER = CUML_ROOT / "scripts/cuml_exact_kde.py"
-PYTHON_BIN = Path("/home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/venvs/cuml-kde/bin/python")
+PYTHON_BIN = Path("/home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/venvs/stage0p1-kde/bin/python")
 CUDA_HOME = Path("/usr/local/cuda-12.6")
 RUN_ROOT = Path(
     os.environ.get(
@@ -47,12 +47,7 @@ PRECISIONS = (("FP64", "float64"), ("FP32", "float32"))
 
 def venv_library_paths() -> list[Path]:
     site_packages = PYTHON_BIN.parents[1] / "lib/python3.10/site-packages"
-    paths = [
-        site_packages / "libcuml/lib64",
-        site_packages / "libraft/lib64",
-        site_packages / "rmm/lib64",
-        site_packages / "cuvs/lib64",
-    ]
+    paths = sorted(site_packages.glob("lib*/lib64"))
     paths.extend(sorted((site_packages / "nvidia").glob("*/lib")))
     return paths
 
@@ -100,10 +95,13 @@ def command_for(mode: str, data_path: Path, query_path: Path | None, rows: int |
 
 def planned_attempts() -> list[Attempt]:
     env = run_env_with_cuda(CUDA_HOME)
+    env["PYTHONNOUSERSITE"] = "1"
     env["PATH"] = f"{PYTHON_BIN.parent}{os.pathsep}{env.get('PATH', '')}"
     lib_paths = [str(path) for path in venv_library_paths() if path.exists()]
     if lib_paths:
-        env["LD_LIBRARY_PATH"] = os.pathsep.join(lib_paths + [env.get("LD_LIBRARY_PATH", "")])
+        joined = os.pathsep.join(lib_paths)
+        env["LD_LIBRARY_PATH"] = os.pathsep.join([joined, env.get("LD_LIBRARY_PATH", "")])
+        env["LIBRARY_PATH"] = os.pathsep.join([joined, env.get("LIBRARY_PATH", "")])
     attempts: list[Attempt] = []
     for workload, mode, data_path, query_path, rows, cols, expected in WORKLOADS:
         for precision, dtype in PRECISIONS:
