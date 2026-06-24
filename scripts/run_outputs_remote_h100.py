@@ -45,6 +45,18 @@ WORKLOADS = (
 PRECISIONS = (("FP64", "float64"), ("FP32", "float32"))
 
 
+def venv_library_paths() -> list[Path]:
+    site_packages = PYTHON_BIN.parents[1] / "lib/python3.10/site-packages"
+    paths = [
+        site_packages / "libcuml/lib64",
+        site_packages / "libraft/lib64",
+        site_packages / "rmm/lib64",
+        site_packages / "cuvs/lib64",
+    ]
+    paths.extend(sorted((site_packages / "nvidia").glob("*/lib")))
+    return paths
+
+
 def matrix_shape(path: Path) -> tuple[int, int]:
     with path.open("r", encoding="utf-8") as handle:
         first = handle.readline().split()
@@ -89,6 +101,9 @@ def command_for(mode: str, data_path: Path, query_path: Path | None, rows: int |
 def planned_attempts() -> list[Attempt]:
     env = run_env_with_cuda(CUDA_HOME)
     env["PATH"] = f"{PYTHON_BIN.parent}{os.pathsep}{env.get('PATH', '')}"
+    lib_paths = [str(path) for path in venv_library_paths() if path.exists()]
+    if lib_paths:
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(lib_paths + [env.get("LD_LIBRARY_PATH", "")])
     attempts: list[Attempt] = []
     for workload, mode, data_path, query_path, rows, cols, expected in WORKLOADS:
         for precision, dtype in PRECISIONS:
