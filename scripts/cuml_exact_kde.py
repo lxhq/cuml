@@ -120,7 +120,7 @@ def import_cuml():
         raise RuntimeError(
             "Could not import cuML/CuPy. Use the local Stage 0 environment, e.g.:\n"
             "  /home/ubuntu/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/"
-            "venvs/stage0p1-kde/bin/python scripts/cuml_exact_kde.py ..."
+            "venvs/kde-baselines/bin/python scripts/cuml_exact_kde.py ..."
         ) from exc
     return cp, KernelDensity
 

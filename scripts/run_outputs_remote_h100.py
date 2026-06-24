@@ -16,7 +16,7 @@ from stage0p1_output_utils import Attempt, run_attempts, run_env_with_cuda
 
 CUML_ROOT = Path("/home/lxheq/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/baselines/cuml")
 HELPER = CUML_ROOT / "scripts/cuml_exact_kde.py"
-PYTHON_BIN = Path("/home/lxheq/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/venvs/stage0p1-kde/bin/python")
+PYTHON_BIN = Path("/home/lxheq/Documents/workspace/GPU-accelerated_Kernel_Density_Exact/venvs/kde-baselines/bin/python")
 CUDA_HOME = Path("/usr/local/cuda-12.4")
 RUN_ROOT = Path(
     os.environ.get(
