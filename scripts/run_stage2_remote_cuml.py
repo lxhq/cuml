@@ -31,7 +31,7 @@ TMP_ROOT = WORKSPACE_ROOT / "tmp-results/stage2"
 PREPARED_ROOT = TMP_ROOT / "prepared"
 GROUND_TRUTH_ROOT = TMP_ROOT / "ground_truth"
 RUN_ROOT = TMP_ROOT / "runs/cuml/remote-h100"
-TIMEOUT_SECONDS = 24 * 60 * 60
+TIMEOUT_SECONDS = 60 * 60
 SCALE_ARGS = ("--scott-diag", "1")
 SCALE = "scott_diag b=1"
 PRECISION_LABEL = "FP64"
