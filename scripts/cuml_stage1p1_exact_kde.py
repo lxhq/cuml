@@ -22,6 +22,8 @@ from typing import Optional
 
 import numpy as np
 
+from stage2_dense_io import read_dense_matrix, read_dense_vector
+
 
 CUML_BANDWIDTH = 1.0 / math.sqrt(2.0)
 TIMING_SCOPE = "end_to_end_in_memory"
@@ -30,23 +32,11 @@ REQUIRED_CUML_VERSION_PREFIX = "26.06"
 
 
 def read_matrix(path: str | Path, dtype: np.dtype) -> np.ndarray:
-    path = Path(path)
-    with path.open("r", encoding="utf-8") as handle:
-        header = handle.readline().strip().split()
-        if len(header) != 2:
-            raise ValueError(f"{path}: expected first line '<rows> <dim>'")
-        rows, dim = int(header[0]), int(header[1])
-        values = np.fromfile(handle, sep=" ", dtype=dtype, count=rows * dim)
-
-    if values.size != rows * dim:
-        raise ValueError(
-            f"{path}: expected {rows * dim} numeric values, found {values.size}"
-        )
-    return values.reshape(rows, dim)
+    return read_dense_matrix(path, dtype)
 
 
 def read_weights(path: str | Path, expected_rows: int, dtype: np.dtype) -> np.ndarray:
-    values = np.loadtxt(path, dtype=dtype).reshape(-1)
+    values = read_dense_vector(path, dtype)
     if values.size == expected_rows + 1 and int(values[0]) == expected_rows:
         values = values[1:]
     if values.size != expected_rows:
@@ -100,6 +90,10 @@ def scale_description(args: argparse.Namespace) -> str:
 
 def gaussian_norm(dim: int, bandwidth: float) -> float:
     return 1.0 / (((2.0 * math.pi) ** (0.5 * dim)) * (bandwidth**dim))
+
+
+def log_gaussian_norm(dim: int, bandwidth: float) -> float:
+    return -0.5 * float(dim) * math.log(2.0 * math.pi) - float(dim) * math.log(bandwidth)
 
 
 def import_cuml():
@@ -158,8 +152,7 @@ def run_pipeline(
 
     kde = fit_kde(KernelDensity, data_gpu, weights_gpu)
 
-    norm = gaussian_norm(data_scaled.shape[1], CUML_BANDWIDTH)
-    log_multiplier = math.log(sum_weights / norm)
+    log_multiplier = math.log(sum_weights) - log_gaussian_norm(data_scaled.shape[1], CUML_BANDWIDTH)
     raw_gpu = evaluate_raw_sum(cp, kde, query_gpu, log_multiplier)
 
     return cp.asnumpy(raw_gpu).reshape(-1)
