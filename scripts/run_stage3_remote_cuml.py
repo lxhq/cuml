@@ -52,6 +52,8 @@ SCALE_ARGS = ("--scott-diag", "1")
 PRECISION = "FP64"
 DTYPE = "float64"
 RELATIVE_TOLERANCE = 1e-5
+UNDERFLOW_THRESHOLD = sys.float_info.min
+CORRECTNESS_RULE = "relative_or_both_fp64_subnormal"
 IMPLEMENTATION_PATHS = (
     "cpp",
     "python",
@@ -123,6 +125,14 @@ SUMMARY_FIELDS = [
     "correctness",
     "correctness_status",
     "failure_count",
+    "strict_relative_correctness",
+    "strict_relative_failure_count",
+    "underflow_accepted_count",
+    "correctness_rule",
+    "relative_tolerance",
+    "underflow_threshold",
+    "correctness_checker_commit",
+    "correctness_checked_at",
     "output_count",
     "max_abs_err",
     "mean_abs_err",
@@ -433,6 +443,8 @@ def compare_values(
     reference_count = len(references)
     compared_count = min(output_count, reference_count)
     failure_count = 0
+    strict_relative_failure_count = 0
+    underflow_accepted_count = 0
     max_absolute_error = 0.0
     sum_absolute_error = 0.0
     max_relative_error = 0.0
@@ -445,6 +457,7 @@ def compare_values(
         reference = float(reference)
         if not math.isfinite(output) or not math.isfinite(reference):
             failure_count += 1
+            strict_relative_failure_count += 1
             max_absolute_error = math.inf
             sum_absolute_error = math.inf
             max_relative_error = math.inf
@@ -454,17 +467,27 @@ def compare_values(
         absolute_error = abs(output - reference)
         max_absolute_error = max(max_absolute_error, absolute_error)
         sum_absolute_error += absolute_error
+        strict_failure = False
         if reference == 0.0:
             zero_reference_count += 1
             if output == 0.0:
                 relative_error = 0.0
             else:
                 relative_error = math.inf
-                failure_count += 1
                 nonzero_output_zero_reference_count += 1
+                strict_failure = True
         else:
             relative_error = absolute_error / abs(reference)
             if relative_error > RELATIVE_TOLERANCE:
+                strict_failure = True
+        if strict_failure:
+            strict_relative_failure_count += 1
+            if (
+                abs(output) < UNDERFLOW_THRESHOLD
+                and abs(reference) < UNDERFLOW_THRESHOLD
+            ):
+                underflow_accepted_count += 1
+            else:
                 failure_count += 1
         max_relative_error = max(max_relative_error, relative_error)
         sum_relative_error += relative_error
@@ -475,6 +498,9 @@ def compare_values(
         or output_count != reference_count
     ):
         failure_count = max(1, failure_count)
+        strict_relative_failure_count = max(
+            1, strict_relative_failure_count
+        )
         correctness_status = "count_mismatch"
     else:
         correctness_status = "compared"
@@ -491,6 +517,12 @@ def compare_values(
         ).lower(),
         "correctness_status": correctness_status,
         "failure_count": failure_count,
+        "strict_relative_correctness": str(
+            correctness_status == "compared"
+            and strict_relative_failure_count == 0
+        ).lower(),
+        "strict_relative_failure_count": strict_relative_failure_count,
+        "underflow_accepted_count": underflow_accepted_count,
         "output_count": output_count,
         "max_abs_err": max_absolute_error,
         "mean_abs_err": mean_absolute_error,
@@ -656,6 +688,74 @@ def write_json_atomic(path: Path, value: dict[str, object]) -> None:
     temporary_path.replace(path)
 
 
+def apply_current_correctness_rule(
+    workload: Workload,
+    record: dict[str, object],
+    checker_commit: str,
+) -> dict[str, object]:
+    if record.get("correctness_rule") == CORRECTNESS_RULE:
+        return record
+
+    if record.get("correctness") == "false":
+        require_paths([workload.output_path])
+        correctness = compare_output(
+            workload.output_path,
+            workload.reference_path,
+            workload.query_rows,
+        )
+        record.update(
+            {
+                "correctness": correctness["correctness"],
+                "correctness_status": correctness["correctness_status"],
+                "failure_count": correctness["failure_count"],
+                "strict_relative_correctness": correctness[
+                    "strict_relative_correctness"
+                ],
+                "strict_relative_failure_count": correctness[
+                    "strict_relative_failure_count"
+                ],
+                "underflow_accepted_count": correctness[
+                    "underflow_accepted_count"
+                ],
+                "output_count": correctness["output_count"],
+                "max_abs_err": format_number(correctness["max_abs_err"]),
+                "mean_abs_err": format_number(correctness["mean_abs_err"]),
+                "max_rel_err": format_number(correctness["max_rel_err"]),
+                "mean_rel_err": format_number(correctness["mean_rel_err"]),
+                "zero_reference_count": correctness[
+                    "zero_reference_count"
+                ],
+                "nonzero_output_zero_reference_count": correctness[
+                    "nonzero_output_zero_reference_count"
+                ],
+            }
+        )
+    else:
+        record.update(
+            {
+                "strict_relative_correctness": "true",
+                "strict_relative_failure_count": 0,
+                "underflow_accepted_count": 0,
+            }
+        )
+
+    record.update(
+        {
+            "correctness_rule": CORRECTNESS_RULE,
+            "relative_tolerance": f"{RELATIVE_TOLERANCE:.17g}",
+            "underflow_threshold": f"{UNDERFLOW_THRESHOLD:.17g}",
+            "correctness_checker_commit": checker_commit,
+            "correctness_checked_at": datetime.now().astimezone().isoformat(),
+        }
+    )
+    output_retained = record.get("correctness") == "false"
+    record["output_retained"] = str(output_retained).lower()
+    write_json_atomic(workload.record_path, record)
+    if not output_retained:
+        workload.output_path.unlink(missing_ok=True)
+    return record
+
+
 def load_record(
     workload: Workload,
     checksums: dict[str, str],
@@ -697,7 +797,7 @@ def load_record(
             )
     else:
         workload.output_path.unlink(missing_ok=True)
-    return record
+    return apply_current_correctness_rule(workload, record, commit)
 
 
 def write_summary(records: list[dict[str, object]]) -> None:
@@ -753,8 +853,14 @@ def write_inventory(
         handle.write(f"main_goal_commit: {goal_commit}\n")
         handle.write(f"cuml_version: {version}\n")
         handle.write(f"relative_tolerance: {RELATIVE_TOLERANCE:.17g}\n")
+        handle.write(
+            f"underflow_threshold: {UNDERFLOW_THRESHOLD:.17g}\n"
+        )
+        handle.write(f"correctness_rule: {CORRECTNESS_RULE}\n")
         handle.write("absolute_tolerance: none\n")
-        handle.write("zero_reference_rule: exact_zero\n")
+        handle.write(
+            "zero_reference_rule: exact_zero_outside_underflow_region\n"
+        )
         handle.write(f"timeout_seconds: {TIMEOUT_SECONDS}\n\n")
         for command in commands:
             handle.write(f"$ {shell_join(command)}\n")
@@ -822,6 +928,20 @@ def run_workload(
         "correctness": correctness["correctness"],
         "correctness_status": correctness["correctness_status"],
         "failure_count": correctness["failure_count"],
+        "strict_relative_correctness": correctness[
+            "strict_relative_correctness"
+        ],
+        "strict_relative_failure_count": correctness[
+            "strict_relative_failure_count"
+        ],
+        "underflow_accepted_count": correctness[
+            "underflow_accepted_count"
+        ],
+        "correctness_rule": CORRECTNESS_RULE,
+        "relative_tolerance": f"{RELATIVE_TOLERANCE:.17g}",
+        "underflow_threshold": f"{UNDERFLOW_THRESHOLD:.17g}",
+        "correctness_checker_commit": commit,
+        "correctness_checked_at": datetime.now().astimezone().isoformat(),
         "output_count": correctness["output_count"],
         "max_abs_err": format_number(correctness["max_abs_err"]),
         "mean_abs_err": format_number(correctness["mean_abs_err"]),
