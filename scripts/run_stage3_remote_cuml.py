@@ -52,6 +52,12 @@ SCALE_ARGS = ("--scott-diag", "1")
 PRECISION = "FP64"
 DTYPE = "float64"
 RELATIVE_TOLERANCE = 1e-5
+IMPLEMENTATION_PATHS = (
+    "cpp",
+    "python",
+    "scripts/cuml_stage1p1_exact_kde.py",
+    "scripts/stage2_dense_io.py",
+)
 
 
 @dataclass(frozen=True)
@@ -129,7 +135,9 @@ SUMMARY_FIELDS = [
     "data_sha256",
     "query_sha256",
     "reference_sha256",
+    "temporary_output_path",
     "temporary_output_sha256",
+    "output_retained",
     "git_branch",
     "git_commit",
     "main_goal_commit",
@@ -179,6 +187,33 @@ def require_clean_stage3() -> tuple[str, str]:
 
 def main_goal_commit() -> str:
     return git_value(EXACT_STAGE3_ROOT, ["rev-parse", "refs/remotes/origin/main"])
+
+
+def require_compatible_implementation(
+    accepted_commit: str, current_commit: str
+) -> None:
+    if accepted_commit == current_commit:
+        return
+    completed = subprocess.run(
+        [
+            "git",
+            "diff",
+            "--quiet",
+            accepted_commit,
+            current_commit,
+            "--",
+            *IMPLEMENTATION_PATHS,
+        ],
+        cwd=CUML_ROOT,
+        check=False,
+    )
+    if completed.returncode == 1:
+        raise RuntimeError(
+            "The cuML implementation changed after an accepted workload; "
+            "that workload cannot be reused."
+        )
+    if completed.returncode != 0:
+        raise RuntimeError("Could not compare the accepted cuML implementation.")
 
 
 def require_h100() -> None:
@@ -626,7 +661,6 @@ def load_record(
     checksums: dict[str, str],
     branch: str,
     commit: str,
-    goal_commit: str,
 ) -> dict[str, object] | None:
     if not workload.record_path.exists():
         return None
@@ -634,8 +668,6 @@ def load_record(
     expected: dict[str, object] = {
         "workload": workload.name,
         "git_branch": branch,
-        "git_commit": commit,
-        "main_goal_commit": goal_commit,
         "data_sha256": checksums["data"],
         "query_sha256": checksums["query"],
         "reference_sha256": checksums["reference"],
@@ -647,7 +679,24 @@ def load_record(
                 f"{workload.record_path} has {name}={record.get(name)!r}; "
                 f"expected {value!r}."
             )
-    workload.output_path.unlink(missing_ok=True)
+    accepted_commit = record.get("git_commit")
+    if not isinstance(accepted_commit, str) or not accepted_commit:
+        raise RuntimeError(f"{workload.record_path} has no accepted commit.")
+    require_compatible_implementation(accepted_commit, commit)
+    accepted_goal_commit = record.get("main_goal_commit")
+    if not isinstance(accepted_goal_commit, str) or not accepted_goal_commit:
+        raise RuntimeError(f"{workload.record_path} has no main goal commit.")
+
+    if record.get("correctness") == "false":
+        require_paths([workload.output_path])
+        if sha256_file(workload.output_path) != record.get(
+            "temporary_output_sha256"
+        ):
+            raise RuntimeError(
+                f"Retained output checksum mismatch for {workload.output_path}"
+            )
+    else:
+        workload.output_path.unlink(missing_ok=True)
     return record
 
 
@@ -756,6 +805,7 @@ def run_workload(
         workload.output_path, workload.reference_path, workload.query_rows
     )
     output_sha256 = sha256_file(workload.output_path)
+    output_retained = correctness["correctness"] == "false"
     record: dict[str, object] = {
         "machine": MACHINE,
         "workload": workload.name,
@@ -786,7 +836,9 @@ def run_workload(
         "data_sha256": checksums["data"],
         "query_sha256": checksums["query"],
         "reference_sha256": checksums["reference"],
+        "temporary_output_path": str(workload.output_path),
         "temporary_output_sha256": output_sha256,
+        "output_retained": str(output_retained).lower(),
         "git_branch": branch,
         "git_commit": commit,
         "main_goal_commit": goal_commit,
@@ -796,7 +848,13 @@ def run_workload(
         "status": "ok",
     }
     write_json_atomic(workload.record_path, record)
-    workload.output_path.unlink()
+    if output_retained:
+        print(
+            f"[stage3-cuml] retaining failed output {workload.output_path}",
+            flush=True,
+        )
+    else:
+        workload.output_path.unlink()
     return record
 
 
@@ -834,7 +892,6 @@ def main() -> int:
             checksums[workload.name],
             branch,
             commit,
-            goal_commit,
         )
         if existing is not None:
             print(f"[stage3-cuml] accepted; skipping {workload.name}", flush=True)
@@ -855,7 +912,8 @@ def main() -> int:
         write_summary(records)
         write_sha256sums()
 
-    OUTPUT_ROOT.rmdir()
+    if OUTPUT_ROOT.exists() and not any(OUTPUT_ROOT.iterdir()):
+        OUTPUT_ROOT.rmdir()
     write_sha256sums()
     print(f"[stage3-cuml] run_root={RUN_ROOT}")
     print(f"[stage3-cuml] summary={SUMMARY_PATH}")
